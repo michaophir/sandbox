@@ -469,6 +469,50 @@ def read_filters(path: str = "role_filters.csv") -> list[dict]:
     return filters
 
 
+def read_profile(path: str = "candidate_profile.json") -> dict:
+    """Read candidate_profile.json. Returns empty dict if file missing."""
+    if not Path(path).exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+
+def companies_from_profile(profile: dict) -> list[dict]:
+    """Extract target_companies from candidate profile."""
+    return [
+        {
+            "company_name": c.get("company_name", ""),
+            "website": c.get("website", ""),
+            "tier": str(c.get("tier", "")),
+        }
+        for c in profile.get("target_companies", [])
+        if c.get("company_name")
+    ]
+
+
+def filters_from_profile(profile: dict) -> list[dict]:
+    """Extract role_filters from candidate profile and compile patterns."""
+    filters = []
+    for f in profile.get("role_filters", []):
+        field = f.get("field", "").strip().lower()
+        value = f.get("value", "").strip()
+        if not field or not value:
+            continue
+        entry: dict = {"field": field, "value": value}
+        if field == "pattern":
+            try:
+                entry["_compiled"] = re.compile(value, re.IGNORECASE)
+            except re.error:
+                continue
+        else:
+            entry["value"] = value.lower()
+        filters.append(entry)
+    return filters
+
+
 def calculate_match_score(job_title: str, description: str, filters: list[dict]):
     """Score a role 0–100 based on filter hits across title/pattern/seniority/domain/skill.
 
@@ -680,11 +724,30 @@ def main() -> None:
     parser.add_argument("--output", default="open_roles.csv", help="Path to output CSV (default: open_roles.csv)")
     parser.add_argument("--delay", type=float, default=1.0, help="Seconds between requests (default: 1.0)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stdout")
+    parser.add_argument("--profile", default="candidate_profile.json", help="Path to candidate profile JSON (default: candidate_profile.json)")
+    parser.add_argument("--csv", action="store_true",
+        help="Force CSV input mode, ignore candidate_profile.json")
     args = parser.parse_args()
 
     error_log = setup_error_log()
-    filters = read_filters()
-    companies = read_companies(args.input)
+
+    # Load from candidate profile if available and populated,
+    # otherwise fall back to CSV files.
+    profile = read_profile(args.profile)
+    profile_companies = companies_from_profile(profile)
+    profile_filters = filters_from_profile(profile)
+
+    if not args.csv and profile_companies and profile_filters:
+        companies = profile_companies
+        filters = profile_filters
+        if args.verbose:
+            print(f"Using candidate profile: {args.profile} "
+                  f"({len(companies)} companies, {len(filters)} filters)")
+    else:
+        filters = read_filters()
+        companies = read_companies(args.input)
+        if args.verbose:
+            print(f"Using CSV files: {args.input} + role_filters.csv")
     existing = load_existing(args.output)
     seen_ids: set[str] = set()
     session = requests.Session()
