@@ -603,6 +603,19 @@ def apply_filters(rows: list[dict], filters: list[dict]) -> list[dict]:
                 row["_matched_filter"] = f"{f['field']}:{f['value']}"
                 filtered.append(row)
                 break
+
+    # Apply exclusions — drop any role whose title contains
+    # an exclude_title value
+    exclusions = [f for f in filters if f["field"] == "exclude_title"]
+    if exclusions:
+        filtered = [
+            row for row in filtered
+            if not any(
+                ex["value"] in (row.get("job_title") or "").lower()
+                for ex in exclusions
+            )
+        ]
+
     return filtered
 
 
@@ -706,7 +719,7 @@ def write_run_summary(
         "companies_total": companies_total,
         "companies_succeeded": companies_succeeded,
         "companies_failed": failed_companies,
-        "filters_applied": [f"{f['field']}:{f['value']}" for f in filters],
+        "filters_applied": [f"{f['field']}:{f['value']}" for f in filters if f["field"] != "exclude_title"],
         "filter_coverage": filter_coverage,
         "roles_fetched_post_filter": total,
         "field_population": {
